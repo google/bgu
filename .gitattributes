@@ -1,0 +1,36 @@
+* text=auto
+
+# These files are text and should be normalized (convert crlf --> lf)
+*.h       text
+*.inl     text
+*.cpp     text
+*.cu      text
+*.h       text
+*.m       text
+# Qt project files
+*.pro     text
+
+# Scripts
+*.bat     text
+*.fsx     text
+*.ps1     text
+*.cmd     text
+
+*.cs      text diff=csharp
+*.xaml    text
+*.csproj  text
+*.sln     text
+*.tt      text
+*.msbuild text
+*.md      text
+
+# Images should be treated as binary
+# (binary is a macro for -text -diff)
+*.png     binary
+*.jpg     binary
+*.jpeg    binary
+*.pfm     binary
+*.pgm     binary
+*.ppm     binary
+
+*.sdf     binary
