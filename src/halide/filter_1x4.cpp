@@ -21,7 +21,7 @@
 #include "fit_only_1x4.h"
 
 #include "benchmark.h"
-#include "halide_image.h"
+#include "HalideBuffer.h"
 #include "halide_image_io.h"
 
 using namespace Halide::Tools;
@@ -33,10 +33,10 @@ int main(int argc, char **argv) {
         return 0;
     }
 
-    Image<float> low_res_in = load_image(argv[1]);
-    Image<float> low_res_out = load_image(argv[2]);
-    Image<float> high_res_in = load_image(argv[3]);
-    Image<float> high_res_out(high_res_in.width(), high_res_in.height());
+    Halide::Buffer<float> low_res_in = load_image(argv[1]);
+    Halide::Buffer<float> low_res_out = load_image(argv[2]);
+    Halide::Buffer<float> high_res_in = load_image(argv[3]);
+    Halide::Buffer<float> high_res_out(high_res_in.width(), high_res_in.height());
     float r_sigma = 1.0f/atoi(argv[5]);
     float s_sigma = atoi(argv[6]);
 
@@ -46,24 +46,14 @@ int main(int argc, char **argv) {
 
     // You'd normally slice out the result using a shader. Check the
     // runtime of curve fitting alone.
-    buffer_t coeffs = {0};
     int grid_w = low_res_in.width() / s_sigma;
     int grid_h = low_res_in.height() / s_sigma;
     int grid_z = round(1.0f/r_sigma);
     grid_w = ((grid_w+7)/8)*8;
-    coeffs.host = (uint8_t *)malloc(sizeof(float) * 4 * grid_w * grid_h * grid_z);
-    coeffs.extent[0] = grid_w;
-    coeffs.extent[1] = grid_h;
-    coeffs.extent[2] = grid_z;
-    coeffs.extent[3] = 4;
-    coeffs.stride[0] = 1;
-    for (int i = 1; i < 4; i++) {
-        coeffs.stride[i] = coeffs.extent[i-1] * coeffs.stride[i-1];
-    }
-    coeffs.elem_size = 4;
+    Halide::Buffer<float> coeffs(grid_w, grid_h, grid_z, 4);
 
     double min_t = benchmark(10, 10, [&]() {
-        fit_only_1x4(r_sigma, s_sigma, low_res_in, low_res_out, high_res_in, &coeffs);
+        fit_only_1x4(r_sigma, s_sigma, low_res_in, low_res_out, high_res_in, coeffs);
     });
     printf("Time for fitting: %gms\n", min_t * 1e3);
 

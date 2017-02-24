@@ -345,10 +345,10 @@ int main(int argc, char **argv) {
                  xf);
 
         // Sample it along the z direction using intensity.
-        Expr bins = cast<int>(1.0f / r_sigma);
+        Expr num_intensity_bins = cast<int>(1.0f / r_sigma);
         Expr val = gray_slice_loc(x, y);
         val = clamp(val, 0.0f, 1.0f);
-        Expr zv = val * bins;
+        Expr zv = val * num_intensity_bins;
         Expr zi = cast<int>(zv);
         Expr zf = zv - zi;
         slice_loc_z(x, y) = {zi, zf};
@@ -369,8 +369,6 @@ int main(int argc, char **argv) {
     // Normalize
     Func slice("slice");
     slice(x, y) = clamp(interpolated(x, y), 0.0f, 1.0f);
-
-    Target target = get_target_from_environment();
 
     // The schedule. Based on the schedule for bilateral grid in the
     // Halide repo.
@@ -454,10 +452,13 @@ int main(int argc, char **argv) {
         .vectorize(c, 4);
 
     // Compile a version that does the slicing.
-    slice.compile_to_file("bgu_1x4", {r_sigma, s_sigma, splat_loc, values, slice_loc}, target);
+    slice.compile_to_file("bgu_1x4", {r_sigma, s_sigma, splat_loc, values,
+        slice_loc}, "bgu_1x4");
 
-    // Compile a version that just does the fitting. Use this with the GL shader.
-    line.compile_to_file("fit_only_1x4", {r_sigma, s_sigma, splat_loc, values, slice_loc}, target);
+    // Compile a version that just does the fitting. Use this with the GL
+    // shader.
+    line.compile_to_file("fit_only_1x4", {r_sigma, s_sigma, splat_loc, values,
+        slice_loc}, "fit_only_1x4");
 
     return 0;
 }
