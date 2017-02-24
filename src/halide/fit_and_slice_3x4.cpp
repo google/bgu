@@ -12,10 +12,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// This is a slightly simplified version of bilateral_grid_3x4.cpp for
-// tasks that output a single channel (e.g. matting). This still
-// requires a 4x4 matrix solve, so most of the code is the same.
-
 #include "Halide.h"
 #include <stdio.h>
 
@@ -143,7 +139,7 @@ Expr pack_channels(Var c, std::vector<Expr> exprs) {
 int main(int argc, char **argv) {
 
     // The low resolution output
-    ImageParam values(Float(32), 2);
+    ImageParam values(Float(32), 3);
 
     // The low resolution input
     ImageParam splat_loc(Float(32), 3);
@@ -189,7 +185,7 @@ int main(int argc, char **argv) {
         // Sum all the terms we need to fit a line relating
         // low-res input to low-res output within this bilateral grid
         // cell
-        Expr v = clamped_values(sx, sy);
+        Expr vr = clamped_values(sx, sy, 0), vg = clamped_values(sx, sy, 1), vb = clamped_values(sx, sy, 2);
         Expr sr = clamped_splat_loc(sx, sy, 0), sg = clamped_splat_loc(sx, sy, 1), sb = clamped_splat_loc(sx, sy, 2);
 
         histogram(x, y, zi, c) +=
@@ -198,7 +194,9 @@ int main(int argc, char **argv) {
                                sg*sg, sg*sb, sg,
                                       sb*sb, sb,
                                            1.0f,
-                         v*sr,  v*sg,  v*sb,  v});
+                        vr*sr, vr*sg, vr*sb, vr,
+                        vg*sr, vg*sg, vg*sb, vg,
+                        vb*sr, vb*sg, vb*sb, vb});
 
     }
 
@@ -259,11 +257,19 @@ int main(int argc, char **argv) {
         A(3, 3) = blurx(x, y, z, 9);
 
         // Pull out the rhs
-        Matrix<4, 1> b;
+        Matrix<4, 3> b;
         b(0, 0) = blurx(x, y, z, 10);
         b(1, 0) = blurx(x, y, z, 11);
         b(2, 0) = blurx(x, y, z, 12);
         b(3, 0) = blurx(x, y, z, 13);
+        b(0, 1) = blurx(x, y, z, 14);
+        b(1, 1) = blurx(x, y, z, 15);
+        b(2, 1) = blurx(x, y, z, 16);
+        b(3, 1) = blurx(x, y, z, 17);
+        b(0, 2) = blurx(x, y, z, 18);
+        b(1, 2) = blurx(x, y, z, 19);
+        b(2, 2) = blurx(x, y, z, 20);
+        b(3, 2) = blurx(x, y, z, 21);
 
         // Regularize by pushing the solution towards the average gain
         // in this cell = (average output luma + eps) / (average input luma + eps).
@@ -274,41 +280,48 @@ int main(int argc, char **argv) {
         // constraints affecting this cell.
         Expr N = A(3, 3);
 
-        // The last row of each matrix is the sum of input RGB values
-        // and output luma values for the pixels affecting this
-        // cell. Instead of dividing them by N+1 to get averages,
-        // we'll multiply epsilon by N+1. This saves two
-        // divisions. We'll also need to multiply the luma values by
-        // four, because using 1 2 1 for the input weights actually
-        // computes luma*4.
-        Expr output_luma = 4 * b(3, 0) + epsilon * (N + 1);
+        // The last row of each matrix is the sum of input and output
+        // RGB values for the pixels affecting this cell. Instead of
+        // dividing them by N+1 to get averages, we'll multiply
+        // epsilon by N+1. This saves two divisions.
+        Expr output_luma = b(3, 0) + 2 * b(3, 1) + b(3, 2) + epsilon * (N + 1);
         Expr input_luma = A(3, 0) + 2 * A(3, 1) + A(3, 2) + epsilon * (N + 1);
         Expr gain = output_luma / input_luma;
 
-        // Add lambda and lambda*gain to the diagonal of the matrices.
-        // In the rgb -> rgb case we regularized the transform to be
-        // close to gain * identity. In the rgb -> gray case we
-        // regularize the transform to be close to gain * (some
-        // reasonable conversion of the input to luma).
+        // Add lambda and lambda*gain to the diagonal of the
+        // matrices. The matrices are sums/moments rather than
+        // means/covariances, so just like above we need to multiply
+        // lambda by N+1 so that it's equivalent to adding a constant
+        // to the diagonal of a covariance matrix. Otherwise it does
+        // nothing in cells with lots of linearly-dependent
+        // constraints.
         Expr weighted_lambda = lambda * (N + 1);
         A(0, 0) += weighted_lambda;
         A(1, 1) += weighted_lambda;
         A(2, 2) += weighted_lambda;
         A(3, 3) += weighted_lambda;
 
-        b(0, 0) += weighted_lambda * gain * 0.25f;
-        b(1, 0) += weighted_lambda * gain * 0.5f;
-        b(2, 0) += weighted_lambda * gain * 0.25f;
+        b(0, 0) += weighted_lambda * gain;
+        b(1, 1) += weighted_lambda * gain;
+        b(2, 2) += weighted_lambda * gain;
 
         // Now solve Ax = b
-        Matrix<1, 4> result = transpose(solve(A, b, line, x));
+        Matrix<3, 4> result = transpose(solve(A, b, line, x));
 
         // Pack the resulting matrix into the output Func.
         line(x, y, z, c) = pack_channels(c, {
                     result(0, 0),
                     result(0, 1),
                     result(0, 2),
-                    result(0, 3)});
+                    result(0, 3),
+                    result(1, 0),
+                    result(1, 1),
+                    result(1, 2),
+                    result(1, 3),
+                    result(2, 0),
+                    result(2, 1),
+                    result(2, 2),
+                    result(2, 3)});
     }
 
     // If using the shader we stop there, and the Func "line" is the
@@ -359,16 +372,18 @@ int main(int argc, char **argv) {
                  slice_loc_z(x, y)[1]);
 
         // Multiply by 3x4 by 4x1.
-        interpolated(x, y) =
-            (interpolated_matrix_z(x, y, 0) * slice_loc(x, y, 0) +
-             interpolated_matrix_z(x, y, 1) * slice_loc(x, y, 1) +
-             interpolated_matrix_z(x, y, 2) * slice_loc(x, y, 2) +
-             interpolated_matrix_z(x, y, 3));
+        interpolated(x, y, c) =
+            (interpolated_matrix_z(x, y, 4 * c + 0) * slice_loc(x, y, 0) +
+             interpolated_matrix_z(x, y, 4 * c + 1) * slice_loc(x, y, 1) +
+             interpolated_matrix_z(x, y, 4 * c + 2) * slice_loc(x, y, 2) +
+             interpolated_matrix_z(x, y, 4 * c + 3));
     }
 
     // Normalize
     Func slice("slice");
-    slice(x, y) = clamp(interpolated(x, y), 0.0f, 1.0f);
+    slice(x, y, c) = clamp(interpolated(x, y, c), 0.0f, 1.0f);
+
+    Target target = get_target_from_environment();
 
     // The schedule. Based on the schedule for bilateral grid in the
     // Halide repo.
@@ -414,7 +429,7 @@ int main(int argc, char **argv) {
         .reorder(c, x, z, y)
         .parallel(y)
         .vectorize(x, 8)
-        .bound(c, 0, 4)
+        .bound(c, 0, 12)
         .unroll(c);
 
     // Applying the curves.
@@ -428,14 +443,17 @@ int main(int argc, char **argv) {
     interpolated_matrix_y
         .compute_root()
         .reorder_storage(c, x, y, z)
-        .bound(c, 0, 4)
-        .vectorize(c);
+        .bound(c, 0, 12)
+        .vectorize(c, 4);
 
     // Compute the output in vectors across x.
     slice
         .compute_root()
         .parallel(y)
-        .vectorize(x, 8);
+        .vectorize(x, 8)
+        .reorder(c, x, y)
+        .bound(c, 0, 3)
+        .unroll(c);
 
     // Computing where to slice vectorizes nicely across x.
     gray_slice_loc
@@ -452,13 +470,13 @@ int main(int argc, char **argv) {
         .vectorize(c, 4);
 
     // Compile a version that does the slicing.
-    slice.compile_to_file("bgu_1x4", {r_sigma, s_sigma, splat_loc, values,
-        slice_loc}, "bgu_1x4");
+    slice.compile_to_file("fit_and_slice_3x4", {r_sigma, s_sigma, splat_loc,
+        values, slice_loc}, "fit_and_slice_3x4");
 
     // Compile a version that just does the fitting. Use this with the GL
     // shader.
-    line.compile_to_file("fit_only_1x4", {r_sigma, s_sigma, splat_loc, values,
-        slice_loc}, "fit_only_1x4");
+    line.compile_to_file("fit_only_3x4", {r_sigma, s_sigma, splat_loc, values,
+        slice_loc}, "fit_only_3x4");
 
     return 0;
 }
