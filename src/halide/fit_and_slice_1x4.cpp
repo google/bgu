@@ -17,9 +17,11 @@
 // requires a 4x4 matrix solve, so most of the code is the same.
 
 #include "Halide.h"
-#include <stdio.h>
+#include <cstdio>
 
 using namespace Halide;
+using Halide::ConciseCasts::f32;
+using Halide::ConciseCasts::i32;
 
 Var x("x"), y("y"), z("z"), c("c");
 
@@ -163,7 +165,11 @@ int main(int argc, char **argv) {
 
     // Figure out how much we're upsampling by. Not relevant if we're
     // just fitting curves.
-    Expr upsample_factor = slice_loc.width() / splat_loc.width();
+    Expr upsample_factor_x =
+        i32(ceil(f32(slice_loc.width()) / splat_loc.width()));
+    Expr upsample_factor_y =
+        i32(ceil(f32(slice_loc.height()) / splat_loc.height()));
+    Expr upsample_factor = max(upsample_factor_x, upsample_factor_y);
 
     Func gray_splat_loc;
     gray_splat_loc(x, y) = (0.25f * clamped_splat_loc(x, y, 0) +

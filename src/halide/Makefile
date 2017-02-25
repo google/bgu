@@ -12,7 +12,28 @@ MACOS_PREFIX_PATH ?= /opt/local
 # object files usable in an Android or iOS app.
 HALIDE_TARGET ?= host
 
-all: high_res_out.png high_res_out_gray.png
+all: box_downsample_cli high_res_out.png high_res_out_gray.png
+
+# Compile Halide source into an executable called box_downsample_generate.
+box_downsample_generate: box_downsample_generator.cpp
+	c++ -std=c++11 -g -fno-rtti \
+		-I $(HALIDE_PATH)/include -I $(HALIDE_PATH)/tools \
+		-L $(HALIDE_PATH)/bin \
+		-lHalide -lpthread -ldl \
+		-o box_downsample_generate \
+		box_downsample_generator.cpp $(HALIDE_PATH)/tools/GenGen.cpp
+
+# Run box_downsample_generator to create box_downsample_halide.{h,a}.
+# Then link against it to produce box_downsample_cli.
+box_downsample_cli: box_downsample_generate box_downsample_cli.cpp
+	DYLD_LIBRARY_PATH=$(HALIDE_PATH)/bin LD_LIBRARY_PATH=$(HALIDE_PATH)/bin ./box_downsample_generate -o . target=host
+	c++ -std=c++11 -O3 -ffast-math -Wall -Werror \
+		-I $(HALIDE_PATH)/include -I $(HALIDE_PATH)/tools -I $(MACOS_PREFIX_PATH)/include \
+		-L $(MACOS_PREFIX_PATH)/lib \
+		-lpthread -ldl -lpng -lz \
+		-o box_downsample_cli \
+		box_downsample_halide.a \
+		box_downsample_cli.cpp
 
 # Compile Halide source into an executable called fit_and_slice_3x4.
 fit_and_slice_3x4: fit_and_slice_3x4.cpp
@@ -28,7 +49,8 @@ fit_and_slice_1x4: fit_and_slice_1x4.cpp
 		-I $(HALIDE_PATH)/include -I $(HALIDE_PATH)/tools \
 		-L $(HALIDE_PATH)/bin \
 		-lHalide -lpthread -ldl -lz \
-		-o fit_and_slice_1x4 fit_and_slice_1x4.cpp
+		-o fit_and_slice_1x4 \
+		fit_and_slice_1x4.cpp
 
 # Run ./fit_and_slice_3x4 to produce fit_and_slice_3x4.o and filter_only_3x4.o.
 fit_and_slice_3x4.o: fit_and_slice_3x4
@@ -70,5 +92,9 @@ high_res_out_gray.png: bgu_cli
 	./bgu_cli ../../images/low_res_in.png ../../images/low_res_out_gray.png ../../images/high_res_in.png high_res_out_gray.png 16 8
 
 clean:
-	rm -f bgu*.o fit_and_slice_3x4 fit_and_slice_1x4 bgu*.h filter_1x4 filter_3x4 fit_only_*.o fit_only_*.h high_res_out*.png
+	rm -f fit_and_slice_*.h fit_and_slice_*.o fit_only_*.h fit_only_*.o
+	rm -f high_res_out*.png
+	rm -f box_downsample_halide.a box_downsample_halide.h
+	rm -f box_downsample_cli bgu_cli
+	rm -rf box_downsample_generate.dSYM
 	rm -rf fit_and_slice_3x4.dSYM fit_and_slice_1x4.dSYM
